@@ -176,12 +176,11 @@ message(STATUS "Enable tests compilation: ${ENABLE_TESTS}")
 
 enable_testing()
 
-option(ENABLE_COVERAGE "Enable code coverage" OFF)
+option(ENABLE_COVERAGE "Enable code coverage" ON)
 set(COV_OPTION "")
 if(${ENABLE_COVERAGE})
     set(COV_OPTION "--cov=src" "--cov-append" "--cov-report=term-missing"
                    "--cov-report=lcov:tests/coverage.info")
-    # "--cov-report=term-missing" "--cov-report=xml:tests/coverage.xml")
 endif()
 message(STATUS "Code coverage: ${ENABLE_COVERAGE}")
 
