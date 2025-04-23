@@ -14,6 +14,7 @@ import test_utils
 
 # Globals
 
+# TODO: MI350 What are the gpu models in MI 350 series
 SUPPORTED_ARCHS = {
     "gfx906": {"mi50": ["MI50", "MI60"]},
     "gfx908": {"mi100": ["MI100"]},
@@ -21,12 +22,14 @@ SUPPORTED_ARCHS = {
     "gfx940": {"mi300": ["MI300A_A0"]},
     "gfx941": {"mi300": ["MI300X_A0"]},
     "gfx942": {"mi300": ["MI300A_A1", "MI300X_A1"]},
+    "gfx950": {"mi350": ["MI350"]},
 }
 
-MI300_CHIP_IDS = {
+CHIP_IDS = {
     "29856": "MI300A_A1",
     "29857": "MI300X_A1",
     "29858": "MI308X",
+    "30112": "MI350",
 }
 
 
@@ -104,6 +107,25 @@ ALL_CSVS_MI300 = sorted(
         "pmc_perf_6.csv",
         "sysinfo.csv",
         "timestamps.csv",
+    ]
+)
+ALL_CSVS_MI350 = sorted(
+    [
+        "SQ_IFETCH_LEVEL.csv",
+        "SQ_INST_LEVEL_LDS.csv",
+        "SQ_INST_LEVEL_SMEM.csv",
+        "SQ_INST_LEVEL_VMEM.csv",
+        "SQ_LEVEL_WAVES.csv",
+        "pmc_perf.csv",
+        "pmc_perf_0.csv",
+        "pmc_perf_1.csv",
+        "pmc_perf_2.csv",
+        "pmc_perf_3.csv",
+        "pmc_perf_4.csv",
+        "pmc_perf_5.csv",
+        "pmc_perf_6.csv",
+        "pmc_perf_7.csv",
+        "sysinfo.csv",
     ]
 )
 
@@ -290,9 +312,9 @@ def gpu_soc():
 
     ## 3) Deduce gpu model name from arch
     gpu_model = list(SUPPORTED_ARCHS[gpu_arch].keys())[0].upper()
-    if gpu_model == "MI300":
-        if chip_id in MI300_CHIP_IDS:
-            gpu_model = MI300_CHIP_IDS[chip_id]
+    if gpu_model not in ("MI50", "MI100", "MI200"):
+        if chip_id in CHIP_IDS:
+            gpu_model = CHIP_IDS[chip_id]
 
     return gpu_model
 
@@ -300,8 +322,16 @@ def gpu_soc():
 soc = gpu_soc()
 
 # Set rocprofv2 as profiler if MI300
-if "MI300" in soc:
-    os.environ["ROCPROF"] = "rocprofv2"
+if soc == "MI100":
+    os.environ["ROCPROF"] = "rocprof"
+
+else:
+    os.environ["ROCPROF"] = "rocprofv3"
+
+
+def using_v3():
+    return "ROCPROF" in os.environ.keys() and os.environ["ROCPROF"].endswith("rocprofv3")
+
 
 Baseline_dir = str(Path("tests/workloads/vcopy/" + soc).resolve())
 
@@ -488,9 +518,19 @@ def test_path(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI200)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI300)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("This test is not supported for {}".format(soc))
         assert 0
@@ -502,7 +542,7 @@ def test_path(binary_handler_profile_rocprof_compute):
 
 @pytest.mark.misc
 def test_roof_kernel_names(binary_handler_profile_rocprof_compute):
-    if soc == "MI100":
+    if soc in ("MI100", "MI350"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -517,9 +557,14 @@ def test_roof_kernel_names(binary_handler_profile_rocprof_compute):
     # assert successful run
     assert returncode == 0
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
-    if soc == "MI200" or "MI300" in soc:
+    if soc == "MI200" in soc or "MI300" in soc:
         assert sorted(list(file_dict.keys())) == sorted(
-            ROOF_ONLY_FILES + ["kernelName_legend.pdf"]
+            (
+                [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
+                if using_v3()
+                else ROOF_ONLY_FILES
+            )
+            + ["kernelName_legend.pdf"]
         )
     else:
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
@@ -543,9 +588,19 @@ def test_device_filter(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI200)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI300)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -571,9 +626,19 @@ def test_kernel(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI200)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI300)
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -626,6 +691,43 @@ def test_block_SQ(binary_handler_profile_rocprof_compute):
             "timestamps.csv",
         ]
 
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
+        ]
+
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(
@@ -652,6 +754,8 @@ def test_block_SQC(binary_handler_profile_rocprof_compute):
         "sysinfo.csv",
         "timestamps.csv",
     ]
+    if using_v3() or soc == "MI350":
+        expected_csvs.remove("timestamps.csv")
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
@@ -684,6 +788,8 @@ def test_block_TA(binary_handler_profile_rocprof_compute):
         "sysinfo.csv",
         "timestamps.csv",
     ]
+    if using_v3() or soc == "MI350":
+        expected_csvs.remove("timestamps.csv")
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
@@ -721,6 +827,24 @@ def test_block_TD(binary_handler_profile_rocprof_compute):
             "sysinfo.csv",
             "timestamps.csv",
         ]
+        if using_v3():
+            expected_csvs = [
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "sysinfo.csv",
+            ]
+    if soc == "MI350":
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "sysinfo.csv",
+        ]
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
@@ -755,6 +879,21 @@ def test_block_TCP(binary_handler_profile_rocprof_compute):
         "timestamps.csv",
     ]
 
+    if using_v3():
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "pmc_perf_8.csv",
+            "sysinfo.csv",
+        ]
+
     if soc == "MI100" or soc == "MI200":
         expected_csvs = [
             "pmc_perf.csv",
@@ -771,6 +910,25 @@ def test_block_TCP(binary_handler_profile_rocprof_compute):
             "sysinfo.csv",
             "timestamps.csv",
         ]
+
+        if using_v3():
+            expected_csvs = [
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "pmc_perf_7.csv",
+                "pmc_perf_8.csv",
+                "pmc_perf_9.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs.remove("timestamps.csv")
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
@@ -808,6 +966,24 @@ def test_block_TCC(binary_handler_profile_rocprof_compute):
         "timestamps.csv",
     ]
 
+    if using_v3():
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "pmc_perf_8.csv",
+            "pmc_perf_9.csv",
+            "pmc_perf_10.csv",
+            "pmc_perf_11.csv",
+            "sysinfo.csv",
+        ]
+
     if soc == "MI100" or soc == "MI200":
         expected_csvs = [
             "pmc_perf.csv",
@@ -825,6 +1001,26 @@ def test_block_TCC(binary_handler_profile_rocprof_compute):
             "sysinfo.csv",
             "timestamps.csv",
         ]
+
+        if using_v3():
+            expected_csvs = [
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "pmc_perf_7.csv",
+                "pmc_perf_8.csv",
+                "pmc_perf_9.csv",
+                "pmc_perf_10.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs.remove("timestamps.csv")
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
@@ -858,6 +1054,38 @@ def test_block_SPI(binary_handler_profile_rocprof_compute):
         "timestamps.csv",
     ]
 
+    if using_v3():
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
+        ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "pmc_perf_8.csv",
+            "pmc_perf_9.csv",
+            "pmc_perf_10.csv",
+            "pmc_perf_11.csv",
+            "sysinfo.csv",
+        ]
+
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(
@@ -887,6 +1115,31 @@ def test_block_CPC(binary_handler_profile_rocprof_compute):
         "timestamps.csv",
     ]
 
+    if using_v3():
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "sysinfo.csv",
+        ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
+        ]
+
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(inspect.stack()[0][3], workload_dir, file_dict)
@@ -910,6 +1163,8 @@ def test_block_CPF(binary_handler_profile_rocprof_compute):
         "sysinfo.csv",
         "timestamps.csv",
     ]
+    if using_v3() or soc == "MI350":
+        expected_csvs.remove("timestamps.csv")
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(
@@ -958,6 +1213,43 @@ def test_block_SQ_CPC(binary_handler_profile_rocprof_compute):
             "pmc_perf_6.csv",
             "sysinfo.csv",
             "timestamps.csv",
+        ]
+
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
         ]
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
@@ -1010,6 +1302,43 @@ def test_block_SQ_TA(binary_handler_profile_rocprof_compute):
             "timestamps.csv",
         ]
 
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
+        ]
+
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(inspect.stack()[0][3], workload_dir, file_dict)
@@ -1054,6 +1383,43 @@ def test_block_SQ_SPI(binary_handler_profile_rocprof_compute):
             "pmc_perf_6.csv",
             "sysinfo.csv",
             "timestamps.csv",
+        ]
+
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
         ]
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
@@ -1105,6 +1471,43 @@ def test_block_SQ_SQC_TCP_CPC(binary_handler_profile_rocprof_compute):
             "pmc_perf_6.csv",
             "sysinfo.csv",
             "timestamps.csv",
+        ]
+
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
         ]
 
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
@@ -1172,6 +1575,43 @@ def test_block_SQ_SPI_TA_TCC_CPF(binary_handler_profile_rocprof_compute):
             "timestamps.csv",
         ]
 
+        if using_v3():
+            expected_csvs = [
+                "SQ_IFETCH_LEVEL.csv",
+                "SQ_INST_LEVEL_LDS.csv",
+                "SQ_INST_LEVEL_SMEM.csv",
+                "SQ_INST_LEVEL_VMEM.csv",
+                "SQ_LEVEL_WAVES.csv",
+                "pmc_perf.csv",
+                "pmc_perf_0.csv",
+                "pmc_perf_1.csv",
+                "pmc_perf_2.csv",
+                "pmc_perf_3.csv",
+                "pmc_perf_4.csv",
+                "pmc_perf_5.csv",
+                "pmc_perf_6.csv",
+                "sysinfo.csv",
+            ]
+
+    if soc == "MI350":
+        expected_csvs = [
+            "SQ_IFETCH_LEVEL.csv",
+            "SQ_INST_LEVEL_LDS.csv",
+            "SQ_INST_LEVEL_SMEM.csv",
+            "SQ_INST_LEVEL_VMEM.csv",
+            "SQ_LEVEL_WAVES.csv",
+            "pmc_perf.csv",
+            "pmc_perf_0.csv",
+            "pmc_perf_1.csv",
+            "pmc_perf_2.csv",
+            "pmc_perf_3.csv",
+            "pmc_perf_4.csv",
+            "pmc_perf_5.csv",
+            "pmc_perf_6.csv",
+            "pmc_perf_7.csv",
+            "sysinfo.csv",
+        ]
+
     assert sorted(list(file_dict.keys())) == sorted(expected_csvs)
 
     validate(
@@ -1193,9 +1633,19 @@ def test_dispatch_0(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI200
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI300
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -1223,9 +1673,19 @@ def test_dispatch_0_1(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI200
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI300
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -1250,9 +1710,19 @@ def test_dispatch_2(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI200
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI300
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -1280,9 +1750,19 @@ def test_join_type_grid(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI200
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI300
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -1307,9 +1787,19 @@ def test_join_type_kernel(binary_handler_profile_rocprof_compute):
     if soc == "MI100":
         assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
     elif soc == "MI200":
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI200
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI200 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI200
+        )
     elif "MI300" in soc:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI300
+        assert sorted(list(file_dict.keys())) == sorted(
+            [f for f in ALL_CSVS_MI300 if f != "timestamps.csv"]
+            if using_v3()
+            else ALL_CSVS_MI300
+        )
+    elif "MI350" in soc:
+        assert sorted(list(file_dict.keys())) == sorted(ALL_CSVS_MI350)
     else:
         print("Testing isn't supported yet for {}".format(soc))
         assert 0
@@ -1326,7 +1816,7 @@ def test_join_type_kernel(binary_handler_profile_rocprof_compute):
 @pytest.mark.sort
 def test_roof_sort_dispatches(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc == "MI100":
+    if soc in ("MI100", "MI350"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1342,7 +1832,12 @@ def test_roof_sort_dispatches(binary_handler_profile_rocprof_compute):
     assert returncode == 0
 
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
-    assert sorted(list(file_dict.keys())) == ROOF_ONLY_FILES
+    assert (
+        sorted(list(file_dict.keys()))
+        == [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
+        if using_v3()
+        else ROOF_ONLY_FILES
+    )
 
     validate(
         inspect.stack()[0][3],
@@ -1356,7 +1851,7 @@ def test_roof_sort_dispatches(binary_handler_profile_rocprof_compute):
 @pytest.mark.sort
 def test_roof_sort_kernels(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc == "MI100":
+    if soc in ("MI100", "MI350"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1372,7 +1867,12 @@ def test_roof_sort_kernels(binary_handler_profile_rocprof_compute):
     assert returncode == 0
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
 
-    assert sorted(list(file_dict.keys())) == ROOF_ONLY_FILES
+    assert (
+        sorted(list(file_dict.keys()))
+        == [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
+        if using_v3()
+        else ROOF_ONLY_FILES
+    )
 
     validate(
         inspect.stack()[0][3],
@@ -1386,7 +1886,7 @@ def test_roof_sort_kernels(binary_handler_profile_rocprof_compute):
 @pytest.mark.mem
 def test_roof_mem_levels_vL1D(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc == "MI100":
+    if soc in ("MI100", "MI350"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1402,7 +1902,12 @@ def test_roof_mem_levels_vL1D(binary_handler_profile_rocprof_compute):
     assert returncode == 0
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
 
-    assert sorted(list(file_dict.keys())) == ROOF_ONLY_FILES
+    assert (
+        sorted(list(file_dict.keys()))
+        == [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
+        if using_v3()
+        else ROOF_ONLY_FILES
+    )
 
     validate(
         inspect.stack()[0][3],
@@ -1416,7 +1921,7 @@ def test_roof_mem_levels_vL1D(binary_handler_profile_rocprof_compute):
 @pytest.mark.mem
 def test_roof_mem_levels_LDS(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc == "MI100":
+    if soc in ("MI100", "MI350"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1432,7 +1937,12 @@ def test_roof_mem_levels_LDS(binary_handler_profile_rocprof_compute):
     assert returncode == 0
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
 
-    assert sorted(list(file_dict.keys())) == ROOF_ONLY_FILES
+    assert (
+        sorted(list(file_dict.keys()))
+        == [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
+        if using_v3()
+        else ROOF_ONLY_FILES
+    )
 
     validate(
         inspect.stack()[0][3],

@@ -42,26 +42,47 @@ from pathlib import Path as path
 import pandas as pd
 
 import config
-from utils.logger import console_debug, console_error, console_log, console_warning
-from utils.mi_gpu_spec import get_mi300_num_xcds
+from utils.logger import (
+    console_debug,
+    console_error,
+    console_log,
+    console_warning,
+    demarcate,
+)
+from utils.mi_gpu_spec import get_num_xcds
 
 rocprof_cmd = ""
 rocprof_args = ""
+spi_pipe_counter_regexs = [r"SPI_CS\d+_(.*)", r"SPI_CSQ_P\d+_(.*)"]
 
 
 def is_tcc_channel_counter(counter):
     return counter.startswith("TCC") and counter.endswith("]")
 
 
-def using_v1():
+def is_spi_pipe_counter(counter):
+    for pattern in spi_pipe_counter_regexs:
+        if re.match(pattern, counter):
+            return True
+    return False
 
-    return "ROCPROF" not in os.environ.keys() or (
-        "ROCPROF" in os.environ.keys() and os.environ["ROCPROF"].endswith("rocprof")
-    )
+
+def get_base_spi_pipe_counter(counter):
+    for pattern in spi_pipe_counter_regexs:
+        match = re.match(pattern, counter)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def using_v1():
+    return "ROCPROF" in os.environ.keys() and os.environ["ROCPROF"].endswith("rocprof")
 
 
 def using_v3():
-    return "ROCPROF" in os.environ.keys() and os.environ["ROCPROF"].endswith("rocprofv3")
+    return "ROCPROF" not in os.environ.keys() or (
+        "ROCPROF" in os.environ.keys() and os.environ["ROCPROF"].endswith("rocprofv3")
+    )
 
 
 def get_version(rocprof_compute_home) -> dict:
@@ -125,7 +146,7 @@ def detect_rocprof():
     global rocprof_cmd
     # detect rocprof
     if not "ROCPROF" in os.environ.keys():
-        rocprof_cmd = "rocprof"
+        rocprof_cmd = "rocprofv3"
     else:
         rocprof_cmd = os.environ["ROCPROF"]
 
@@ -133,7 +154,7 @@ def detect_rocprof():
     rocprof_path = shutil.which(rocprof_cmd)
 
     if not rocprof_path:
-        rocprof_cmd = "rocprof"
+        rocprof_cmd = "rocprofv3"
         console_warning(
             "Unable to resolve path to %s binary. Reverting to default." % rocprof_cmd
         )
@@ -571,12 +592,7 @@ def run_prof(
 
     # set required env var for mi300
     new_env = None
-    if (
-        mspec.gpu_model.lower() == "mi300x_a0"
-        or mspec.gpu_model.lower() == "mi300x_a1"
-        or mspec.gpu_model.lower() == "mi300a_a0"
-        or mspec.gpu_model.lower() == "mi300a_a1"
-    ):
+    if mspec.gpu_model.lower() not in ("mi50", "mi60", "mi210", "mi250", "mi250x"):
         new_env = os.environ.copy()
         new_env["ROCPROFILER_INDIVIDUAL_XCC_MODE"] = "1"
 
@@ -631,14 +647,12 @@ def run_prof(
         results_files = process_rocprofv3_output(
             format_rocprof_output, workload_dir, is_timestamps
         )
-        # kokkos trace output processing for --kokkos-trace
-        # TODO: as rocprofv3 --kokkos-trace feature improves, rocprof-compute should make updates accordingly
+
         if "--kokkos-trace" in options:
-            console_debug(
-                "[run_prof] --kokkos-trace detected, handling *_marker_api_trace.csv outputs."
-            )
+            # TODO: as rocprofv3 --kokkos-trace feature improves, rocprof-compute should make updates accordingly
             process_kokkos_trace_output(workload_dir, fbase)
-        # TODO: add hip trace output processing
+        elif "--hip-trace" in options:
+            process_hip_trace_output(workload_dir, fbase)
 
         # Combine results into single CSV file
         if results_files:
@@ -661,7 +675,7 @@ def run_prof(
     if new_env and not using_v3() and not using_v1():
         # flatten tcc for applicable mi300 input
         f = path(workload_dir + "/out/pmc_1/results_" + fbase + ".csv")
-        xcds = total_xcds(mspec.gpu_model, mspec.compute_partition)
+        xcds = get_num_xcds(mspec.gpu_model, mspec.compute_partition)
         df = flatten_tcc_info_across_xcds(f, xcds, int(mspec._l2_banks))
         df.to_csv(f, index=False)
 
@@ -800,6 +814,7 @@ def process_rocprofv3_output(rocprof_output, workload_dir, is_timestamps):
     return results_files_csv
 
 
+@demarcate
 def process_kokkos_trace_output(workload_dir, fbase):
     # marker api trace csv files are generated for each process
     marker_api_trace_csvs = glob.glob(
@@ -821,6 +836,29 @@ def process_kokkos_trace_output(workload_dir, fbase):
         shutil.copyfile(
             workload_dir + "/out/pmc_1/results_" + fbase + "_marker_api_trace.csv",
             workload_dir + "/" + fbase + "_marker_api_trace.csv",
+        )
+
+
+@demarcate
+def process_hip_trace_output(workload_dir, fbase):
+    # marker api trace csv files are generated for each process
+    hip_api_trace_csvs = glob.glob(workload_dir + "/out/pmc_1/*/*_hip_api_trace.csv")
+    existing_hip_files_csv = [d for d in hip_api_trace_csvs if path(d).is_file()]
+
+    # concate and output marker api trace info
+    combined_results = pd.concat(
+        [pd.read_csv(f) for f in existing_hip_files_csv], ignore_index=True
+    )
+
+    combined_results.to_csv(
+        workload_dir + "/out/pmc_1/results_" + fbase + "_hip_api_trace.csv",
+        index=False,
+    )
+
+    if path(workload_dir + "/out").exists():
+        shutil.copyfile(
+            workload_dir + "/out/pmc_1/results_" + fbase + "_hip_api_trace.csv",
+            workload_dir + "/" + fbase + "_hip_api_trace.csv",
         )
 
 
@@ -891,6 +929,7 @@ def detect_roofline(mspec):
     elif (
         rhel_distro == "platform:el8"
         or rhel_distro == "platform:el9"
+        or rhel_distro == "platform:el10"
         or rhel_distro == "platform:al8"
     ):
         # Must be a valid RHEL machine
@@ -1063,62 +1102,6 @@ def flatten_tcc_info_across_xcds(file, xcds, tcc_channel_per_xcd):
         df.loc[len(df.index)] = flatten_list
 
     return df
-
-
-def total_xcds(gpu_model, compute_partition):
-    """
-    Returns the number of xcds for a gpu model and compute_partition pair.
-    """
-
-    # For mi300 chips, return result from mi_gpu_spec
-    result = get_mi300_num_xcds(gpu_model, compute_partition)
-    if result:
-        return result
-
-    # For other systems, use manual check
-    # check MI300 has a valid compute partition
-    mi300a_model = ["mi300a_a0", "mi300a_a1"]
-    mi300x_model = ["mi300x_a0", "mi300x_a1"]
-    mi308x_model = ["mi308x"]
-    if (
-        gpu_model.lower() in mi300a_model + mi300x_model + mi308x_model
-        and compute_partition == "NA"
-    ):
-        console_error("Invalid compute partition found for {}".format(gpu_model))
-
-    if gpu_model.lower() not in mi300a_model + mi300x_model + mi308x_model:
-        return 1
-    # from the whitepaper
-    # https://www.amd.com/content/dam/amd/en/documents/instinct-tech-docs/white-papers/amd-cdna-3-white-paper.pdf
-    if compute_partition.lower() == "spx":
-        if gpu_model.lower() in mi300a_model:
-            return 6
-        if gpu_model.lower() in mi300x_model:
-            return 8
-        if gpu_model.lower() in mi308x_model:
-            return 4
-    if compute_partition.lower() == "tpx":
-        if gpu_model.lower() in mi300a_model:
-            return 2
-    if compute_partition.lower() == "dpx":
-        if gpu_model.lower() in mi300x_model:
-            return 4
-        if gpu_model.lower() in mi308x_model:
-            return 2
-    if compute_partition.lower() == "qpx":
-        if gpu_model.lower() in mi300x_model:
-            return 2
-    if compute_partition.lower() == "cpx":
-        if gpu_model.lower() in mi300x_model:
-            return 1
-        if gpu_model.lower() in mi308x_model:
-            return 1
-    # TODO implement other archs here as needed
-    console_error(
-        "Unknown compute partition / arch found for {} / {}".format(
-            compute_partition, gpu_model
-        )
-    )
 
 
 def get_submodules(package_name):
