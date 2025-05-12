@@ -312,9 +312,10 @@ def gpu_soc():
 
     ## 3) Deduce gpu model name from arch
     gpu_model = list(SUPPORTED_ARCHS[gpu_arch].keys())[0].upper()
-    if gpu_model not in ("MI50", "MI100", "MI200"):
-        if chip_id in CHIP_IDS:
-            gpu_model = CHIP_IDS[chip_id]
+    # For testing purposes we only care about gpu model series not the specific model
+    # if gpu_model not in ("MI50", "MI100", "MI200"):
+    #     if chip_id in CHIP_IDS:
+    #         gpu_model = CHIP_IDS[chip_id]
 
     return gpu_model
 
@@ -542,7 +543,7 @@ def test_path(binary_handler_profile_rocprof_compute):
 
 @pytest.mark.misc
 def test_roof_kernel_names(binary_handler_profile_rocprof_compute):
-    if soc in ("MI100", "MI350"):
+    if soc in ("MI100"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -557,7 +558,9 @@ def test_roof_kernel_names(binary_handler_profile_rocprof_compute):
     # assert successful run
     assert returncode == 0
     file_dict = test_utils.check_csv_files(workload_dir, 1, num_kernels)
-    if soc == "MI200" in soc or "MI300" in soc:
+    if soc == "MI100":
+        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
+    else:
         assert sorted(list(file_dict.keys())) == sorted(
             (
                 [f for f in ROOF_ONLY_FILES if f != "timestamps.csv"]
@@ -566,8 +569,6 @@ def test_roof_kernel_names(binary_handler_profile_rocprof_compute):
             )
             + ["kernelName_legend.pdf"]
         )
-    else:
-        assert sorted(list(file_dict.keys())) == ALL_CSVS_MI100
 
     validate(
         inspect.stack()[0][3],
@@ -1816,7 +1817,7 @@ def test_join_type_kernel(binary_handler_profile_rocprof_compute):
 @pytest.mark.sort
 def test_roof_sort_dispatches(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc in ("MI100", "MI350"):
+    if soc in ("MI100"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1851,7 +1852,7 @@ def test_roof_sort_dispatches(binary_handler_profile_rocprof_compute):
 @pytest.mark.sort
 def test_roof_sort_kernels(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc in ("MI100", "MI350"):
+    if soc in ("MI100"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1886,7 +1887,7 @@ def test_roof_sort_kernels(binary_handler_profile_rocprof_compute):
 @pytest.mark.mem
 def test_roof_mem_levels_vL1D(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc in ("MI100", "MI350"):
+    if soc in ("MI100"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing
@@ -1921,7 +1922,7 @@ def test_roof_mem_levels_vL1D(binary_handler_profile_rocprof_compute):
 @pytest.mark.mem
 def test_roof_mem_levels_LDS(binary_handler_profile_rocprof_compute):
     # only test 1 device for roofline
-    if soc in ("MI100", "MI350"):
+    if soc in ("MI100"):
         # roofline is not supported on MI100
         assert True
         # Do not continue testing

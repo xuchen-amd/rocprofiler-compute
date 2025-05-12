@@ -49,7 +49,7 @@ from utils.logger import (
     console_warning,
     demarcate,
 )
-from utils.mi_gpu_spec import get_num_xcds
+from utils.mi_gpu_spec import mi_gpu_specs
 
 rocprof_cmd = ""
 rocprof_args = ""
@@ -587,8 +587,10 @@ def run_prof(
     # standard rocprof options
     default_options = ["-i", fname]
     options = default_options + profiler_options
-    if using_v3() and path_counter_config_yaml.exists():
-        options = ["-E", str(path_counter_config_yaml)] + options
+    if using_v3():
+        options = ["-A", "absolute"] + options
+        if path_counter_config_yaml.exists():
+            options = ["-E", str(path_counter_config_yaml)] + options
 
     # set required env var for mi300
     new_env = None
@@ -630,6 +632,9 @@ def run_prof(
     if rocprof_cmd.endswith("v2"):
         # rocprofv2 has separate csv files for each process
         results_files = glob.glob(workload_dir + "/out/pmc_1/results_*.csv")
+
+        if len(results_files) == 0:
+            return
 
         # Combine results into single CSV file
         combined_results = pd.concat(
@@ -675,7 +680,7 @@ def run_prof(
     if new_env and not using_v3() and not using_v1():
         # flatten tcc for applicable mi300 input
         f = path(workload_dir + "/out/pmc_1/results_" + fbase + ".csv")
-        xcds = get_num_xcds(mspec.gpu_model, mspec.compute_partition)
+        xcds = mi_gpu_specs.get_num_xcds(mspec.gpu_model, mspec.compute_partition)
         df = flatten_tcc_info_across_xcds(f, xcds, int(mspec._l2_banks))
         df.to_csv(f, index=False)
 
@@ -806,7 +811,6 @@ def process_rocprofv3_output(rocprof_output, workload_dir, is_timestamps):
         else:
             # when the input is not for timestamps, and counter csv file is not generated, we assume failed rocprof run and will completely bypass the file generation and merging for current pmc
             results_files_csv = []
-            console_warning("No counter csv files generated, rocprofv3 run failed!!!")
 
     else:
         console_error("The output file of rocprofv3 can only support json or csv!!!")
@@ -863,6 +867,10 @@ def process_hip_trace_output(workload_dir, fbase):
 
 
 def replace_timestamps(workload_dir):
+
+    if not path(workload_dir, "timestamps.csv").is_file():
+        return
+
     df_stamps = pd.read_csv(workload_dir + "/timestamps.csv")
     if "Start_Timestamp" in df_stamps.columns and "End_Timestamp" in df_stamps.columns:
         # Update timestamps for all *.csv output files
@@ -937,14 +945,14 @@ def detect_roofline(mspec):
     elif (
         (type(sles_distro) == str and len(sles_distro) >= 3)
         and sles_distro[:2] == "15"  # confirm string and len
-        and int(sles_distro[3]) >= 3  # SLES15 and SP >= 3
+        and int(sles_distro[3]) >= 6  # SLES15 and SP >= 6
     ):
         # Must be a valid SLES machine
-        # Use SP3 binary for all forward compatible service pack versions
-        distro = "15.3"
-    elif ubuntu_distro == "20.04" or ubuntu_distro == "22.04" or ubuntu_distro == "24.04":
+        # Use SP6 binary for all forward compatible service pack versions
+        distro = "15.6"
+    elif ubuntu_distro == "22.04" or ubuntu_distro == "24.04":
         # Must be a valid Ubuntu machine
-        distro = ubuntu_distro
+        distro = "22.04"
     else:
         console_error("roofline", "Cannot find a valid binary for your operating system")
 
@@ -982,10 +990,8 @@ def mibench(args, mspec):
 
     distro_map = {
         "platform:el8": "rhel8",
-        "15.3": "sles15sp5",
-        "20.04": "ubuntu20_04",
-        "22.04": "ubuntu20_04",
-        "24.04": "ubuntu20_04",
+        "15.6": "sles15sp6",
+        "22.04": "ubuntu22_04",
     }
 
     binary_paths = []
@@ -1006,8 +1012,6 @@ def mibench(args, mspec):
                 dir
                 + "-"
                 + distro_map[target_binary["distro"]]
-                + "-"
-                + mspec.gpu_series.lower()
                 + "-rocm"
                 + target_binary["rocm_ver"]
             )
@@ -1135,7 +1139,7 @@ def is_workload_empty(path):
             )
 
     else:
-        console_error("profiling", "Cannot find pmc_perf.csv in %s" % path)
+        console_error("analysis", "No profiling data found.")
 
 
 def print_status(msg):
