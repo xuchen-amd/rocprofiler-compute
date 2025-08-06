@@ -56,7 +56,7 @@ class KernelView(Container):
     def __init__(self, config_path: Optional[str] = None):
         super().__init__(id="kernel-view")
         self.dfs = {}
-        self.top_kernel = []
+        self.top_kernels = {}
         self.current_selection = None
 
         self.config_path = config_path or (
@@ -84,32 +84,35 @@ class KernelView(Container):
 
     def update_results(self, per_kernel_dfs, top_kernels) -> None:
         self.dfs = per_kernel_dfs
-        self.top_kernel = top_kernels
+        self.top_kernels = top_kernels
 
         top_container = self.query_one("#top-container", VerticalScroll)
         top_container.remove_children()
 
-        if not self.top_kernel:
+        if not self.top_kernels:
             top_container.mount(Label("No kernels available", classes="placeholder"))
             return
 
         # Build and mount components
-        keys = self._get_sorted_keys()
+        self.new_perf_metric()
+        # build header section
+        keys = self.top_kernels[0].keys()
         header_text = " | ".join(f"{key:25}" for key in keys)
         top_container.mount(Label(header_text, classes="kernel-table-header"))
 
+        # build selector section
         radio_buttons = []
-        for i, kernel in enumerate(self.top_kernel):
+        for i, kernel in enumerate(self.top_kernels):
             row_text = " | ".join(
                 f"{str(kernel.get(key, 'N/A'))[:18]:25}" for key in keys
             )
             button = RadioButton(row_text, id=f"kernel-{i}")
             button.kernel_data = kernel
             radio_buttons.append(button)
-
         top_container.mount(RadioSet(*radio_buttons))
 
-        self.current_selection = self.top_kernel[0]["Kernel_Name"]
+        # build analysis section
+        self.current_selection = self.top_kernels[0]["Kernel_Name"]
         self.update_bottom_content()
 
     def update_view(self, message: str, log_level: str) -> None:
@@ -120,46 +123,32 @@ class KernelView(Container):
             self.status_label.update(message)
             self.status_label.set_classes(log_level)
 
-    def reload_config(self, config_path: str = None) -> None:
-        if config_path:
-            self.config_path = config_path
-        if self.dfs and self.top_kernel:
-            self.update_results(self.dfs, self.top_kernel)
+    def new_perf_metric(self):
+        new_metrics = ["VGPRs", "Grid Size", "Workgroup Size"]
+        for new_metric in new_metrics:
+            for i, kernel in enumerate(self.top_kernels):
+                df_path = self.dfs[kernel["Kernel_Name"]]["7. Wavefront"][
+                    "7.1 Wavefront Launch Stats"
+                ]["df"]
+                metric_avg = (
+                    df_path[df_path["Metric"] == new_metric]["Avg"].iloc[0].item()
+                )
+                self.top_kernels[i][new_metric] = metric_avg
 
-    def build_header(self):
-        for kernel in self.top_kernel:
-            self.keys.update(kernel.keys())
-
-        self.keys = sorted(self.keys)
-
-        if "Kernel_Name" in self.keys:
-            self.keys.remove("Kernel_Name")
-            self.keys.insert(0, "Kernel_Name")
-
-        header_text = " | ".join(f"{key:25}" for key in self.keys)
-        header_label = Label(header_text, classes="kernel-table-header")
-
-        return header_label
-
-    def build_selector(self):
-        radio_buttons = []
-
-        for i, kernel in enumerate(self.top_kernel):
-            row_data = []
-            for key in self.keys:
-                value = str(kernel.get(key, "N/A"))
-                if len(value) > 18:
-                    value = value[:15] + "..."
-                row_data.append(f"{value:25}")
-
-            row_text = " | ".join(row_data)
-            radio_button = RadioButton(row_text, id=f"kernel-{i}")
-            radio_button.kernel_data = kernel
-            radio_buttons.append(radio_button)
-
-        selector = RadioSet(*radio_buttons)
-
-        return selector
+        """
+        header_order = [
+            "Dispatch_ID",
+            "Kernel_Name",
+            "Mean(ns)",
+            "Median(ns)",
+            "Sun(ns)",
+            "Compute Throughput",
+            "Memory Throughput",
+            "VGPRs",
+            "Grid Size",
+            "Work Group Size",
+        ]
+        """
 
     @on(RadioSet.Changed)
     def on_radio_changed(self, event: RadioSet.Changed) -> None:
@@ -202,15 +191,3 @@ class KernelView(Container):
             bottom_container.mount(
                 Label(f"Error displaying results: {str(e)}", classes="error")
             )
-
-    def _get_sorted_keys(self):
-        keys = set()
-        for kernel in self.top_kernel:
-            keys.update(kernel.keys())
-
-        keys = sorted(keys)
-        if "Kernel_Name" in keys:
-            keys.remove("Kernel_Name")
-            keys.insert(0, "Kernel_Name")
-
-        return keys

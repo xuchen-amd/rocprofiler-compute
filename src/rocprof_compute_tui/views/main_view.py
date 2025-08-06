@@ -142,7 +142,7 @@ class MainView(Horizontal):
 
             sys_info = file_io.load_sys_info(sysinfo_path).iloc[0].to_dict()
 
-            # Configure SoC and run analysis
+            # 3. Configure SoC and run analysis
             self.app.load_soc_specs(sys_info)
             analyzer.set_soc(self.app.soc)
             analyzer.pre_processing()
